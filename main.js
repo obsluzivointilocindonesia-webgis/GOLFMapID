@@ -5,195 +5,149 @@ const viewer = new Cesium.Viewer('cesiumContainer', {
     terrain: Cesium.Terrain.fromWorldTerrain(),
 });
 
-let points = [];
+let activePoints = []; 
+let labelsList = []; // Untuk menyimpan label agar mudah dihapus
 let profileChart = null;
 let contourDataSource = null;
 let isContourVisible = false;
 
-// 2. LOAD TILESET & CAMERA
+// 2. LOAD ASSET
 async function init() {
     try {
         const tileset = await Cesium.Cesium3DTileset.fromIonAssetId(4345477);
         viewer.scene.primitives.add(tileset);
-        
-        // Posisi target (Bandung)
-        const targetPos = Cesium.Cartesian3.fromDegrees(107.641889, -6.870107, 950);
         viewer.camera.flyTo({
-            destination: targetPos,
-            orientation: {
-                heading: Cesium.Math.toRadians(5),
-                pitch: Cesium.Math.toRadians(-15.0),
-                roll: 0.0
-            },
+            destination: Cesium.Cartesian3.fromDegrees(107.641889, -6.870107, 950),
+            orientation: { heading: Cesium.Math.toRadians(5), pitch: Cesium.Math.toRadians(-15.0), roll: 0.0 },
             duration: 2
         });
-    } catch (error) {
-        console.error("Gagal memuat Tileset:", error);
-    }
+    } catch (e) { console.error(e); }
 }
 init();
 
-// 3. EVENT HANDLER: KLIK PETA
-const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
-handler.setInputAction(async function (movement) {
-    const cartesian = viewer.scene.pickPosition(movement.position);
-    if (!Cesium.defined(cartesian)) return;
+// 3. FUNGSI PERHITUNGAN BEARING
+function getBearing(start, end) {
+    const s = Cesium.Cartographic.fromCartesian(start);
+    const e = Cesium.Cartographic.fromCartesian(end);
+    const y = Math.sin(e.longitude - s.longitude) * Math.cos(e.latitude);
+    const x = Math.cos(s.latitude) * Math.sin(e.latitude) - Math.sin(s.latitude) * Math.cos(e.latitude) * Math.cos(e.longitude - s.longitude);
+    return (Cesium.Math.toDegrees(Math.atan2(y, x)) + 360) % 360;
+}
 
-    points.push(cartesian);
-    
-    // Marker Titik
+// 4. UPDATE VISUAL & LABEL (VERSI LABEL DI TITIK AWAL)
+function updateVisuals() {
+    // Hapus semua label lama
+    labelsList.forEach(l => viewer.entities.remove(l));
+    labelsList = [];
+
+    if (activePoints.length < 2) return;
+
+    // Gambar ulang garis utama
+    const lineId = 'dynamicLine';
+    if (viewer.entities.getById(lineId)) viewer.entities.removeById(lineId);
     viewer.entities.add({
-        position: cartesian,
-        point: { 
-            pixelSize: 10, 
-            color: Cesium.Color.YELLOW, 
-            outlineColor: Cesium.Color.BLACK,
-            outlineWidth: 2,
-            disableDepthTestDistance: Number.POSITIVE_INFINITY 
-        }
-    });
-
-    if (points.length === 2) {
-        calculateAll(points[0], points[1]);
-        points = []; // Reset setelah 2 titik
-    }
-}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-
-// 4. LOGIKA PERHITUNGAN & LABEL
-async function calculateAll(p1, p2) {
-    const carto1 = Cesium.Cartographic.fromCartesian(p1);
-    const carto2 = Cesium.Cartographic.fromCartesian(p2);
-
-    const distance = Cesium.Cartesian3.distance(p1, p2);
-    const bedaTinggi = carto2.height - carto1.height;
-    const bearing = (Cesium.Math.toDegrees(Math.atan2(
-        Math.sin(carto2.longitude - carto1.longitude) * Math.cos(carto2.latitude),
-        Math.cos(carto1.latitude) * Math.sin(carto2.latitude) - Math.sin(carto1.latitude) * Math.cos(carto2.latitude) * Math.cos(carto2.longitude - carto1.longitude)
-    )) + 360) % 360;
-    
-    const slopePercent = (bedaTinggi / distance) * 100;
-
-    // Garis
-    viewer.entities.add({
+        id: lineId,
         polyline: {
-            positions: [p1, p2],
+            positions: activePoints.map(p => p.position),
             width: 4,
             material: Cesium.Color.YELLOW,
             clampToGround: true
         }
     });
 
-    // Label Bearing di Titik 1
-    viewer.entities.add({
-        position: p1,
-        label: {
-            text: `Arah: ${bearing.toFixed(1)}°\nSlope: ${slopePercent.toFixed(1)}%`,
-            font: 'bold 12pt sans-serif',
-            fillColor: Cesium.Color.AQUA,
-            outlineWidth: 2,
-            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            pixelOffset: new Cesium.Cartesian2(0, -40),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY
-        }
-    });
+    // Iterasi untuk membuat label
+    for (let i = 1; i < activePoints.length; i++) {
+        const pStart = activePoints[i-1].position; // Titik Awal Segmen
+        const pEnd = activePoints[i].position;     // Titik Akhir Segmen
+        
+        const cStart = Cesium.Cartographic.fromCartesian(pStart);
+        const cEnd = Cesium.Cartographic.fromCartesian(pEnd);
 
-    // Label Jarak di Titik 2
-    viewer.entities.add({
-        position: p2,
-        label: {
-            text: `Jarak: ${distance.toFixed(2)}m\nΔH: ${bedaTinggi.toFixed(2)}m`,
-            font: 'bold 12pt sans-serif',
-            fillColor: Cesium.Color.WHITE,
-            outlineWidth: 2,
-            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-            pixelOffset: new Cesium.Cartesian2(0, -40),
-            disableDepthTestDistance: Number.POSITIVE_INFINITY
-        }
-    });
+        const dist = Cesium.Cartesian3.distance(pStart, pEnd);
+        const deltaH = cEnd.height - cStart.height;
+        const bearing = getBearing(pStart, pEnd);
+        const slope = (deltaH / dist) * 100;
 
-    generateProfile(p1, p2);
-}
+        // A. Label JARAK (Tetap di tengah segmen)
+        const midPos = Cesium.Cartesian3.lerp(pStart, pEnd, 0.5, new Cesium.Cartesian3());
+        const distLabel = viewer.entities.add({
+            position: midPos,
+            label: {
+                text: `${dist.toFixed(1)} m`,
+                font: 'bold 16pt "Arial Black", Gadget, sans-serif',
+                fillColor: Cesium.Color.AQUA,
+                outlineWidth: 4,
+                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                heightReference: Cesium.HeightReference.clampToHeightMostDetailed,
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
+            }
+        });
+        labelsList.push(distLabel);
 
-// 5. TOGGLE KONTUR (ID: 4383775)
-document.getElementById('contourBtn').addEventListener('click', async function() {
-    isContourVisible = !isContourVisible;
-    this.innerText = `Toggle Contour: ${isContourVisible ? 'ON' : 'OFF'}`;
-    this.style.background = isContourVisible ? '#e74c3c' : '#2c3e50';
-
-    try {
-        if (!contourDataSource) {
-            console.log("Memuat kontur dengan gradasi warna...");
-            const resource = await Cesium.IonResource.fromAssetId(4383775);
-            contourDataSource = await Cesium.GeoJsonDataSource.load(resource, {
-                clampToGround: true 
-            });
-
-            const entities = contourDataSource.entities.values;
-            let minH = Infinity;
-            let maxH = -Infinity;
-
-            // 1. SCAN NILAI MIN & MAX (Ganti 'Kontur' dengan nama properti di file Anda)
-            entities.forEach(entity => {
-                if (entity.properties && entity.properties.Kontur) {
-                    let val = parseFloat(entity.properties.Kontur.getValue());
-                    if (!isNaN(val)) {
-                        if (val < minH) minH = val;
-                        if (val > maxH) maxH = val;
-                    }
-                }
-            });
-
-            // 2. APPLY GRADASI & LABEL
-            entities.forEach(entity => {
-                if (entity.properties && entity.properties.Kontur) {
-                    let h = parseFloat(entity.properties.Kontur.getValue());
-                    
-                    // Hitung ratio (0.0 untuk terendah, 1.0 untuk tertinggi)
-                    let ratio = (h - minH) / (maxH - minH);
-                    if (isNaN(ratio)) ratio = 0;
-
-                    // Warna HSL: 0.6 (Biru) ke 0.0 (Merah)
-                    const color = Cesium.Color.fromHsl(0.6 * (1.0 - ratio), 1.0, 0.5);
-
-                    if (entity.polyline) {
-                        entity.polyline.material = color;
-                        entity.polyline.width = 2.5;
-                        entity.polyline.classificationType = Cesium.ClassificationType.BOTH;
-                    }
-                }
-            });
-        }
-
-        isContourVisible ? viewer.dataSources.add(contourDataSource) : viewer.dataSources.remove(contourDataSource);
-    } catch (err) {
-        console.error("Gagal memuat gradasi kontur:", err);
+        // B. Label INFO DETAIL (diletakkan di pStart / Titik Awal Segmen)
+        const infoLabel = viewer.entities.add({
+            position: pStart,
+            label: {
+                text: `ARAH: ${bearing.toFixed(1)}°\nKEMIRINGAN: ${slope.toFixed(1)}%\nΔTINGGI: ${deltaH.toFixed(1)}m`,
+                font: 'bold 14pt "Arial Black", Gadget, sans-serif',
+                fillColor: Cesium.Color.WHITE,
+                outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 4,
+                style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                pixelOffset: new Cesium.Cartesian2(0, -50), // Offset agak tinggi agar tidak tumpang tindih
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+                horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+                verticalOrigin: Cesium.VerticalOrigin.BOTTOM
+            }
+        });
+        labelsList.push(infoLabel);
     }
-});
+    generateMultiPointProfile();
+}
+// 5. EVENT HANDLER KLIK
+const handler = new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas);
+handler.setInputAction(async function (movement) {
+    const cartesian = viewer.scene.pickPosition(movement.position);
+    if (!Cesium.defined(cartesian)) return;
 
-// 6. CLEAR BUTTON
-document.getElementById('clearBtn').addEventListener('click', () => {
-    viewer.entities.removeAll();
-    if(profileChart) profileChart.destroy();
-    document.getElementById('chartContainer').style.display = 'none';
-});
+    const v = viewer.entities.add({
+        position: cartesian,
+        point: { pixelSize: 8, color: Cesium.Color.GREEN, disableDepthTestDistance: Number.POSITIVE_INFINITY }
+    });
+    
+    activePoints.push({ position: cartesian, entity: v });
+    updateVisuals();
+}, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
-// 7. FUNGSI PROFILE (Sama seperti sebelumnya)
-async function generateProfile(start, end) {
-    const samples = 40;
+// 6. MULTI-POINT PROFILE
+async function generateMultiPointProfile() {
+    const totalSamples = 100;
     const labels = [];
     const heights = [];
-    const pointsToSample = [];
-    for (let i = 0; i <= samples; i++) {
-        pointsToSample.push(Cesium.Cartesian3.lerp(start, end, i / samples, new Cesium.Cartesian3()));
-    }
-    const clampedPoints = await viewer.scene.clampToHeightMostDetailed(pointsToSample);
-    clampedPoints.forEach((pos, i) => {
-        if (Cesium.defined(pos)) {
-            const h = Cesium.Cartographic.fromCartesian(pos).height;
-            labels.push(`${((Cesium.Cartesian3.distance(start, end) / samples) * i).toFixed(0)}m`);
-            heights.push(h);
+    const positions = activePoints.map(p => p.position);
+    
+    let totalDist = 0;
+    for (let i = 0; i < positions.length - 1; i++) totalDist += Cesium.Cartesian3.distance(positions[i], positions[i+1]);
+
+    let cumDist = 0;
+    for (let i = 0; i < positions.length - 1; i++) {
+        const start = positions[i];
+        const end = positions[i+1];
+        const segD = Cesium.Cartesian3.distance(start, end);
+        const segS = Math.max(2, Math.floor((segD / totalDist) * totalSamples));
+
+        for (let j = 0; j < segS; j++) {
+            const r = j / segS;
+            const p = Cesium.Cartesian3.lerp(start, end, r, new Cesium.Cartesian3());
+            const cl = await viewer.scene.clampToHeightMostDetailed([p]);
+            if (cl[0]) {
+                const h = Cesium.Cartographic.fromCartesian(cl[0]).height;
+                labels.push((cumDist + (r * segD)).toFixed(1) + "m");
+                heights.push(h);
+            }
         }
-    });
+        cumDist += segD;
+    }
     document.getElementById('chartContainer').style.display = 'block';
     renderChart(labels, heights);
 }
@@ -206,14 +160,92 @@ function renderChart(labels, data) {
         data: {
             labels: labels,
             datasets: [{
-                label: 'Elevasi (m)',
+                label: 'Elevasi Kumulatif (m)',
                 data: data,
                 borderColor: '#2ecc71',
-                fill: true,
                 backgroundColor: 'rgba(46, 204, 113, 0.2)',
-                tension: 0.3
+                fill: true,
+                tension: 0.1,
+                pointRadius: 0
             }]
         },
         options: { responsive: true, maintainAspectRatio: false }
     });
 }
+
+// 7. KONTUR & CLEAR
+document.getElementById('contourBtn').addEventListener('click', async function() {
+    isContourVisible = !isContourVisible;
+    this.innerText = `Toggle Contour: ${isContourVisible ? 'ON' : 'OFF'}`;
+    this.style.background = isContourVisible ? '#e74c3c' : '#2c3e50';
+
+    try {
+        if (!contourDataSource) {
+            console.log("Loading Contour with Elevation Grading...");
+            const resource = await Cesium.IonResource.fromAssetId(4383775);
+            contourDataSource = await Cesium.GeoJsonDataSource.load(resource, { clampToGround: true });
+
+            const entities = contourDataSource.entities.values;
+            let minH = Infinity, maxH = -Infinity;
+
+            // Tahap 1: Scan Min/Max Elevation
+            entities.forEach(e => {
+                const h = e.properties.Kontur ? parseFloat(e.properties.Kontur.getValue()) : null;
+                if (h !== null && !isNaN(h)) {
+                    if (h < minH) minH = h;
+                    if (h > maxH) maxH = h;
+                }
+            });
+
+            // Tahap 2: Apply Gradasi Biru (Rendah) ke Merah (Tinggi) & Label
+            // ... (Bagian Scan Min/Max tetap sama) ...
+
+    entities.forEach(e => {
+        const h = e.properties.Kontur ? parseFloat(e.properties.Kontur.getValue()) : 0;
+        let ratio = (h - minH) / (maxH - minH);
+        if (isNaN(ratio)) ratio = 0;
+
+        const color = Cesium.Color.fromHsl(0.6 * (1.0 - ratio), 1.0, 0.5);
+
+        if (e.polyline) {
+            e.polyline.material = color;
+            e.polyline.width = 2;
+            e.polyline.classificationType = Cesium.ClassificationType.BOTH;
+
+        // Kita ambil titik tengah dari koordinat garis untuk menaruh label
+            const positions = e.polyline.positions.getValue();
+            if (positions && positions.length > 0) {
+                const centerIndex = Math.floor(positions.length / 2);
+                const centerPos = positions[centerIndex];
+
+                e.position = centerPos; // Menentukan posisi label pada entity
+                e.label = {
+                    text: h.toString(),
+                    font: 'bold 10pt Verdana, Geneva, sans-serif',
+                    fillColor: Cesium.Color.WHITE,
+                    outlineColor: Cesium.Color.BLACK,
+                    outlineWidth: 3,
+                    style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                // heightReference sangat penting agar tidak tenggelam di bawah terrain
+                    heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND, 
+                    eyeOffset: new Cesium.ConstantProperty(new Cesium.Cartesian3(0, 0, -1)), // Memaksa label tampil sedikit di depan garis
+                    disableDepthTestDistance: Number.POSITIVE_INFINITY, // Label tembus pandang terhadap objek lain
+                    distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 150)
+                    };
+                }
+            }
+        });
+        }
+
+        isContourVisible ? viewer.dataSources.add(contourDataSource) : viewer.dataSources.remove(contourDataSource);
+    } catch (err) { console.error("Contour Load Error:", err); }
+});
+
+document.getElementById('clearBtn').addEventListener('click', () => {
+    activePoints.forEach(p => viewer.entities.remove(p.entity));
+    labelsList.forEach(l => viewer.entities.remove(l));
+    if (viewer.entities.getById('dynamicLine')) viewer.entities.removeById('dynamicLine');
+    activePoints = []; labelsList = [];
+    if (profileChart) profileChart.destroy();
+    document.getElementById('chartContainer').style.display = 'none';
+});
