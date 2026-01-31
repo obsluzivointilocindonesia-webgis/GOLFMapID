@@ -31,25 +31,3 @@ body, html, #cesiumContainer {
     display: none; z-index: 1000;
     box-shadow: 0 4px 15px rgba(0,0,0,0.3);
 }
-
-/* Aturan khusus untuk layar kecil (HP) */
-@media only screen and (max-width: 768px) {
-    .btn {
-        padding: 15px 25px; /* Tombol lebih besar */
-        font-size: 14px;
-        width: 100%; /* Tombol memenuhi lebar layar kiri */
-    }
-    
-    #chartContainer {
-        width: 90%; /* Grafik profil lebih lebar di HP */
-        height: 200px;
-        left: 5%;
-        bottom: 10px;
-    }
-
-    #toolbar-info {
-        font-size: 12px;
-        padding: 10px;
-        top: 150px; /* Geser info agar tidak tertutup tombol yang membesar */
-    }
-}
