@@ -5,8 +5,6 @@ const viewer = new Cesium.Viewer('cesiumContainer', {
     terrain: Cesium.Terrain.fromWorldTerrain(),
 });
 
-viewer.resolutionScale = window.devicePixelRatio;
-
 let activePoints = []; 
 let labelsList = []; // Untuk menyimpan label agar mudah dihapus
 let profileChart = null;
@@ -81,8 +79,7 @@ function updateVisuals() {
                 outlineWidth: 4,
                 style: Cesium.LabelStyle.FILL_AND_OUTLINE,
                 heightReference: Cesium.HeightReference.clampToHeightMostDetailed,
-                disableDepthTestDistance: Number.POSITIVE_INFINITY,
-                //pixelOffset: new Cesium.Cartesian2(0, -8), // Jauhkan sedikit lagi dari titik agar tidak tertutup jempol
+                disableDepthTestDistance: Number.POSITIVE_INFINITY
             }
         });
         labelsList.push(distLabel);
@@ -97,13 +94,10 @@ function updateVisuals() {
                 outlineColor: Cesium.Color.BLACK,
                 outlineWidth: 4,
                 style: Cesium.LabelStyle.FILL_AND_OUTLINE,
-                pixelOffset: new Cesium.Cartesian2(0, -5), // Offset agak tinggi agar tidak tumpang tindih
+                pixelOffset: new Cesium.Cartesian2(0, -50), // Offset agak tinggi agar tidak tumpang tindih
                 disableDepthTestDistance: Number.POSITIVE_INFINITY,
                 horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
-                verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
-                showBackground: true,
-                backgroundColor: new Cesium.Color(0.1, 0.1, 0.1, 0.7), // Hitam transparan
-                backgroundPadding: new Cesium.Cartesian2(10, 8),
+                verticalOrigin: Cesium.VerticalOrigin.BOTTOM
             }
         });
         labelsList.push(infoLabel);
@@ -182,7 +176,7 @@ function renderChart(labels, data) {
 // 7. KONTUR & CLEAR
 document.getElementById('contourBtn').addEventListener('click', async function() {
     isContourVisible = !isContourVisible;
-    this.innerText = `Toggle Contour: ${isContourVisible ? 'ON' : 'OFF'}`;
+    this.innerText = `Tampilkan Kontur: ${isContourVisible ? 'ON' : 'OFF'}`;
     this.style.background = isContourVisible ? '#e74c3c' : '#2c3e50';
 
     try {
@@ -233,8 +227,7 @@ document.getElementById('contourBtn').addEventListener('click', async function()
                     outlineWidth: 3,
                     style: Cesium.LabelStyle.FILL_AND_OUTLINE,
                 // heightReference sangat penting agar tidak tenggelam di bawah terrain
-                    heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND,
-                    pixelOffset: new Cesium.Cartesian2(0, -5), 
+                    heightReference: Cesium.HeightReference.RELATIVE_TO_GROUND, 
                     eyeOffset: new Cesium.ConstantProperty(new Cesium.Cartesian3(0, 0, -1)), // Memaksa label tampil sedikit di depan garis
                     disableDepthTestDistance: Number.POSITIVE_INFINITY, // Label tembus pandang terhadap objek lain
                     distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 150)
