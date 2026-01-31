@@ -94,6 +94,9 @@ function updateVisuals() {
                 outlineColor: Cesium.Color.BLACK,
                 outlineWidth: 4,
                 style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+                showBackground: true,
+                backgroundColor: new Cesium.Color(0, 0, 0, 0.5), // Hitam transparan 50%
+                backgroundPadding: new Cesium.Cartesian2(7, 5), // Jarak teks ke pinggir kotak
                 pixelOffset: new Cesium.Cartesian2(0, -50), // Offset agak tinggi agar tidak tumpang tindih
                 disableDepthTestDistance: Number.POSITIVE_INFINITY,
                 horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
